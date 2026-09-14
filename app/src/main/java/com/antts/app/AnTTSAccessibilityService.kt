@@ -137,6 +137,14 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
         private var downX = 0f
         private var downY = 0f
         private var barWidth = 0
+        private val trafficMonitor = TrafficMonitor(this@AnTTSAccessibilityService)
+        private val trafficRefresh = object : Runnable {
+            override fun run() {
+                if (!shown) return
+                traffic.text = trafficMonitor.monthlyText()
+                main.postDelayed(this, 2_000L)
+            }
+        }
 
         fun show() {
             if (shown) return
@@ -147,11 +155,12 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             progress.setBackgroundColor(Color.argb((settings.progressAlpha * 2.55).toInt(), 255, 255, 255))
             root.addView(progress, FrameLayout.LayoutParams(0, -1))
             traffic.apply {
-                text = TrafficMonitor(this@AnTTSAccessibilityService).monthlyText()
-                textSize = 8f
+                text = trafficMonitor.monthlyText()
+                textSize = 17f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
                 includeFontPadding = false
                 gravity = Gravity.CENTER
-                setTextColor(Color.argb(105, 255, 255, 255))
+                setTextColor(Color.argb(220, 255, 255, 255))
                 setPadding(0, 0, 0, 0)
             }
             root.addView(traffic, FrameLayout.LayoutParams(-1, -1))
@@ -172,8 +181,13 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
-            ).apply { gravity = Gravity.TOP; y = 0 }
+            ).apply {
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                x = 0
+                y = 0
+            }
             wm.addView(root, params); shown = true
+            main.post(trafficRefresh)
         }
 
         fun setProgress(index: Int, total: Int) {
@@ -185,7 +199,13 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             }
         }
         fun setPlaying(playing: Boolean) { root.contentDescription = if (playing) "AnTTS: чтение включено" else "AnTTS: чтение остановлено" }
-        fun hide() { if (shown) { wm.removeView(root); shown = false } }
+        fun hide() {
+            if (shown) {
+                shown = false
+                main.removeCallbacks(trafficRefresh)
+                wm.removeView(root)
+            }
+        }
         private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     }
 }
