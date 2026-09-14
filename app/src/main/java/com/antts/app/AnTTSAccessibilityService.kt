@@ -63,7 +63,6 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
         current = index.coerceIn(0, fragments.lastIndex)
         val node = fragments[current]
         node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-        node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_TO_POSITION, Bundle().apply { putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_MOVEMENT_GRANULARITY_INT, current) })
         val text = node.text?.toString()?.trim().orEmpty()
         if (text.isNotBlank()) tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "antts_$current")
         overlay?.setProgress(current, fragments.size)
