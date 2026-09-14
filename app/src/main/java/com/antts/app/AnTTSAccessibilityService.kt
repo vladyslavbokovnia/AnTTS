@@ -3,6 +3,7 @@ package com.antts.app
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -77,16 +78,51 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
         if (!reading || blocks.isEmpty()) return
         current = current.coerceIn(0, blocks.lastIndex)
         val block = blocks[current]
+        if (!block.node.isVisibleToUser) {
+            bringIntoView(block.node)
+            main.postDelayed({ if (reading) speakCurrent() }, 180)
+            return
+        }
         block.node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-        bringIntoView(block.node)
         tts?.speak(block.text, TextToSpeech.QUEUE_FLUSH, null, "antts-$current-${System.nanoTime()}")
         overlay?.setProgress(current, blocks.size)
     }
 
     private fun advanceAfterSpeech() {
-        if (current + 1 < blocks.size) { current++; speakCurrent() }
+        if (current + 1 < blocks.size) {
+            val next = blocks[current + 1]
+            if (AppSettings(this).scrollMode == "smooth" && nearBottom(next.node)) {
+                scrollParent(next.node)?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                main.postDelayed({ if (reading) { current++; speakCurrent() } }, 180)
+            } else {
+                current++
+                speakCurrent()
+            }
+        }
         else scrollAndLoadNextPage()
     }
+
+    private fun nearBottom(node: AccessibilityNodeInfo): Boolean {
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        return rect.bottom > resources.displayMetrics.heightPixels - navigationBarHeight() - dp(72)
+    }
+
+    private fun scrollParent(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var parent = node.parent
+        while (parent != null) {
+            if (parent.isScrollable) return parent
+            parent = parent.parent
+        }
+        return null
+    }
+
+    private fun navigationBarHeight(): Int {
+        val id = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+        return if (id > 0) resources.getDimensionPixelSize(id).coerceIn(0, 160) else 0
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun scrollAndLoadNextPage() {
         val root = rootInActiveWindow
@@ -113,16 +149,31 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
     private fun bringIntoView(node: AccessibilityNodeInfo) {
         var parent = node.parent
         while (parent != null) {
-            if (parent.isScrollable && !node.isVisibleToUser) parent.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            if (parent.isScrollable && !node.isVisibleToUser) {
+                parent.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                break
+            }
             parent = parent.parent
         }
     }
 
     private fun findScrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
-        if (node.isScrollable) return node
-        for (i in 0 until node.childCount) findScrollable(node.getChild(i))?.let { return it }
-        return null
+        val candidates = mutableListOf<AccessibilityNodeInfo>()
+        collectScrollables(node, candidates)
+        return candidates.maxByOrNull { areaOnScreen(it) }
+    }
+
+    private fun collectScrollables(node: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>) {
+        if (node == null) return
+        if (node.isScrollable) out += node
+        for (i in 0 until node.childCount) collectScrollables(node.getChild(i), out)
+    }
+
+    private fun areaOnScreen(node: AccessibilityNodeInfo): Long {
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        return rect.width().toLong() * rect.height().toLong()
     }
 
     override fun onInterrupt() { reading = false; tts?.stop(); overlay?.setPlaying(false) }
@@ -223,8 +274,15 @@ private object TextExtractor {
             val value = node.text?.toString()?.trim().orEmpty()
             if (value.length >= 3 && !isControl(node, value)) unique.putIfAbsent(value, node)
         }
-        return unique.values.map { ExtractedBlock(it.text.toString().trim(), it) }
+        return unique.values.map { node ->
+            ExtractedBlock(node.text.toString().trim(), node)
+        }.sortedWith(compareBy<ExtractedBlock> { block -> screenTop(block.node) }.thenBy { block -> screenLeft(block.node) })
     }
+
+    private fun screenTop(node: AccessibilityNodeInfo): Int = node.boundsInScreen().top
+    private fun screenLeft(node: AccessibilityNodeInfo): Int = node.boundsInScreen().left
+
+    private fun AccessibilityNodeInfo.boundsInScreen(): Rect = Rect().also { getBoundsInScreen(it) }
 
     private fun collect(node: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>) {
         if (node == null || !node.isVisibleToUser) return

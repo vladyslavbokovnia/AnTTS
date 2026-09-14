@@ -39,6 +39,11 @@ class MainActivity : Activity() {
             setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }
         root.addView(enable, match())
+        val usage = Button(this).apply {
+            text = "Разрешить доступ к данным об использовании"
+            setOnClickListener { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+        }
+        root.addView(usage, match())
         addSeek(root, "Прозрачность прогресс-бара", settings.progressAlpha, 10, 100) { settings.progressAlpha = it }
         addSeek(root, "Прозрачность чёрного фона", settings.backgroundAlpha, 0, 100) { settings.backgroundAlpha = it }
         addSeek(root, "Высота панели (dp)", settings.barHeightDp, 16, 64) { settings.barHeightDp = it }
