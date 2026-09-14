@@ -144,6 +144,8 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             root.setBackgroundColor(Color.TRANSPARENT)
             val black = View(this@AnTTSAccessibilityService).apply { setBackgroundColor(Color.argb((settings.backgroundAlpha * 2.55).toInt(), 0, 0, 0)) }
             root.addView(black, FrameLayout.LayoutParams(-1, -1))
+            progress.setBackgroundColor(Color.argb((settings.progressAlpha * 2.55).toInt(), 255, 255, 255))
+            root.addView(progress, FrameLayout.LayoutParams(0, -1))
             traffic.apply {
                 text = TrafficMonitor(this@AnTTSAccessibilityService).monthlyText()
                 textSize = 8f
@@ -153,8 +155,6 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
                 setPadding(0, 0, 0, 0)
             }
             root.addView(traffic, FrameLayout.LayoutParams(-1, -1))
-            progress.setBackgroundColor(Color.argb((settings.progressAlpha * 2.55).toInt(), 255, 255, 255))
-            root.addView(progress, FrameLayout.LayoutParams(0, -1))
             root.setOnTouchListener { _, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> { downX = event.rawX; downY = event.rawY; true }
@@ -168,7 +168,9 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             }
             val params = WindowManager.LayoutParams(
                 -1, dp(settings.barHeightDp), WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             ).apply { gravity = Gravity.TOP; y = 0 }
             wm.addView(root, params); shown = true
