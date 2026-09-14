@@ -42,6 +42,36 @@ class MainActivity : Activity() {
         addSeek(root, "Прозрачность прогресс-бара", settings.progressAlpha, 10, 100) { settings.progressAlpha = it }
         addSeek(root, "Прозрачность чёрного фона", settings.backgroundAlpha, 0, 100) { settings.backgroundAlpha = it }
         addSeek(root, "Высота панели (dp)", settings.barHeightDp, 16, 64) { settings.barHeightDp = it }
+        val trafficDayLabel = TextView(this).apply { textSize = 16f; setPadding(0, 16, 0, 0) }
+        root.addView(trafficDayLabel)
+        val trafficDay = SeekBar(this).apply {
+            max = 30
+            progress = (settings.trafficStartDay - 1).coerceIn(0, 30)
+            fun update() {
+                settings.trafficStartDay = progress + 1
+                trafficDayLabel.text = "Учёт трафика с ${settings.trafficStartDay}-го числа каждого месяца"
+            }
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) { update() }
+                override fun onStartTrackingTouch(s: SeekBar?) = Unit
+                override fun onStopTrackingTouch(s: SeekBar?) = Unit
+            })
+            update()
+        }
+        root.addView(trafficDay, match())
+        val colorLabel = TextView(this).apply { text = "Цвет прогресс-бара"; textSize = 16f; setPadding(0, 16, 0, 4) }
+        root.addView(colorLabel)
+        val color = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, arrayOf("Белый", "Чёрный"))
+            setSelection(if (settings.progressColor == Color.BLACK) 1 else 0)
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+                override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    settings.progressColor = if (position == 1) Color.BLACK else Color.WHITE
+                }
+            }
+        }
+        root.addView(color, match())
         val modeLabel = TextView(this).apply { text = "Режим прокрутки"; textSize = 16f; setPadding(0, 16, 0, 4) }
         root.addView(modeLabel)
         val mode = Spinner(this).apply {
@@ -53,16 +83,8 @@ class MainActivity : Activity() {
             }
         }
         root.addView(mode, match())
-        val date = EditText(this).apply {
-            hint = "Дата начала учёта: ГГГГ-ММ-ДД"
-            setText(settings.manualStartDate)
-            inputType = android.text.InputType.TYPE_CLASS_DATETIME
-            setPadding(0, 20, 0, 4)
-            setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) settings.manualStartDate = text.toString().trim() }
-        }
-        root.addView(date, match())
         val help = TextView(this).apply {
-            text = "Оставьте дату пустой, чтобы считать с первого дня текущего месяца. Нажатие на верхнюю полосу запускает/останавливает чтение; свайп меняет блок."
+            text = "Трафик считается по данным Android за выбранный расчётный цикл. Нажатие на верхнюю полосу запускает/останавливает чтение; свайп меняет блок."
             textSize = 13f; setTextColor(Color.DKGRAY); setPadding(0, 16, 0, 0)
         }
         root.addView(help)

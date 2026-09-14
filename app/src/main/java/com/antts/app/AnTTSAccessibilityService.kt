@@ -152,15 +152,19 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             root.setBackgroundColor(Color.TRANSPARENT)
             val black = View(this@AnTTSAccessibilityService).apply { setBackgroundColor(Color.argb((settings.backgroundAlpha * 2.55).toInt(), 0, 0, 0)) }
             root.addView(black, FrameLayout.LayoutParams(-1, -1))
-            progress.setBackgroundColor(Color.argb((settings.progressAlpha * 2.55).toInt(), 255, 255, 255))
+            val progressColor = settings.progressColor
+            progress.setBackgroundColor(Color.argb(
+                (settings.progressAlpha * 2.55).toInt(),
+                Color.red(progressColor), Color.green(progressColor), Color.blue(progressColor)
+            ))
             root.addView(progress, FrameLayout.LayoutParams(0, -1))
             traffic.apply {
                 text = trafficMonitor.monthlyText()
-                textSize = 17f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                textSize = 27f
+                setTypeface(android.graphics.Typeface.create("sans-serif-thin", android.graphics.Typeface.NORMAL))
                 includeFontPadding = false
                 gravity = Gravity.CENTER
-                setTextColor(Color.argb(220, 255, 255, 255))
+                setTextColor(Color.WHITE)
                 setPadding(0, 0, 0, 0)
             }
             root.addView(traffic, FrameLayout.LayoutParams(-1, -1))

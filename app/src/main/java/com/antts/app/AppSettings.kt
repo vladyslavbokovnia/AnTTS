@@ -19,21 +19,29 @@ class AppSettings(context: Context) {
     var barHeightDp: Int
         get() = prefs.getInt("bar_height_dp", 28)
         set(value) = prefs.edit().putInt("bar_height_dp", value.coerceIn(16, 64)).apply()
+    var trafficStartDay: Int
+        get() = prefs.getInt("traffic_start_day", 1).coerceIn(1, 31)
+        set(value) = prefs.edit().putInt("traffic_start_day", value.coerceIn(1, 31)).apply()
+    var progressColor: Int
+        get() = prefs.getInt("progress_color", 0xFFFFFFFF.toInt())
+        set(value) = prefs.edit().putInt("progress_color", value).apply()
 
     var scrollMode: String
         get() = prefs.getString("scroll_mode", "smooth") ?: "smooth"
         set(value) = prefs.edit().putString("scroll_mode", value).apply()
 
-    var manualStartDate: String
-        get() = prefs.getString("traffic_start_date", "") ?: ""
-        set(value) = prefs.edit().putString("traffic_start_date", value).apply()
-
     fun periodStartMillis(): Long {
-        val value = manualStartDate
-        if (value.isNotBlank()) return runCatching {
-            SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(value)?.time
-        }.getOrNull() ?: monthStart()
-        return monthStart()
+        val now = System.currentTimeMillis()
+        val cycle = java.util.Calendar.getInstance().apply {
+            timeInMillis = now
+            set(java.util.Calendar.DAY_OF_MONTH, minOf(trafficStartDay, getActualMaximum(java.util.Calendar.DAY_OF_MONTH)))
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        if (now < cycle.timeInMillis) cycle.add(java.util.Calendar.MONTH, -1)
+        return cycle.timeInMillis
     }
 
     private fun monthStart(): Long {
