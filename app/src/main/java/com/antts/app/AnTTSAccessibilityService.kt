@@ -1,7 +1,9 @@
 package com.antts.app
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.graphics.Color
+import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Handler
@@ -119,7 +121,7 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
 
     private fun refreshBlocks() {
         val root = rootInActiveWindow ?: return
-        val fresh = TextExtractor.extract(root)
+        val fresh = try { TextExtractor.extract(root) } catch (e: Exception) { return }
         val snapshot = fresh.joinToString("\u0000") {
             val r = Rect(); it.node.getBoundsInScreen(r)
             "${it.text}|${r.top}|${r.bottom}|${it.node.viewIdResourceName}"
@@ -144,7 +146,8 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
         val block = blocks[current]
         if (!block.node.isVisibleToUser) {
             bringIntoView(block.node)
-            main.postDelayed({ if (reading) speakCurrent() }, 180)
+            val generation = speechGeneration
+            main.postDelayed({ if (reading && speechGeneration == generation) speakCurrent() }, 180)
             return
         }
         block.node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
@@ -157,15 +160,16 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
         if (current + 1 < blocks.size) {
             val next = blocks[current + 1]
             if (AppSettings(this).scrollMode == "smooth" && nearBottom(next.node)) {
-                scrollParent(next.node)?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
                 val generation = speechGeneration
-                main.postDelayed({
+                val nextText = next.text
+                smoothScrollBy(next.node) {
                     if (reading && speechGeneration == generation) {
                         refreshBlocks()
-                        current = (current + 1).coerceAtMost(blocks.lastIndex)
+                        val matched = blocks.indexOfFirst { it.text == nextText }
+                        current = if (matched >= 0) matched else (current + 1).coerceAtMost(blocks.lastIndex)
                         speakCurrent()
                     }
-                }, 220)
+                }
             } else {
                 current++
                 speakCurrent()
@@ -187,6 +191,27 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             parent = parent.parent
         }
         return null
+    }
+
+    /** Real continuous scroll: drags the scrollable container slowly instead of jumping a full page. */
+    private fun smoothScrollBy(node: AccessibilityNodeInfo, onDone: () -> Unit) {
+        val target = scrollParent(node)
+        if (target == null) { onDone(); return }
+        val rect = Rect(); target.getBoundsInScreen(rect)
+        if (rect.height() < 100) { onDone(); return }
+        val x = (rect.left + rect.right) / 2f
+        val startY = rect.bottom - rect.height() * 0.1f
+        val endY = rect.top + rect.height() * 0.1f
+        val path = Path().apply { moveTo(x, startY); lineTo(x, endY) }
+        val duration = 700L
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, duration))
+            .build()
+        val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) { onDone() }
+            override fun onCancelled(gestureDescription: GestureDescription?) { onDone() }
+        }, main)
+        if (!dispatched) onDone()
     }
 
     private fun navigationBarHeight(): Int {
@@ -359,6 +384,21 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
 }
 
 private object TextExtractor {
+    /** How many parents up to check for "this text actually belongs to a control" (icon+label rows, chips, tabs). */
+    private const val MAX_ANCESTOR_DEPTH = 3
+
+    /** Whole-subtree exclusion: app bars, bottom nav, tabs, side nav, snackbars, FABs — never main content. */
+    private val CHROME_CONTAINER_MARKERS = listOf(
+        "toolbar", "actionbar", "appbarlayout", "bottomnavigationview", "bottomappbar",
+        "tablayout", "navigationview", "navigationrailview", "snackbar", "floatingactionbutton"
+    )
+
+    /** Leaf/ancestor exclusion: the text itself is a control, not body content. */
+    private val CONTROL_CLASS_MARKERS = listOf(
+        "button", "switch", "checkbox", "radiobutton", "togglebutton",
+        "chip", "tab", "menuitem", "spinner", "seekbar"
+    )
+
     fun extract(root: AccessibilityNodeInfo): List<ExtractedBlock> {
         val candidates = mutableListOf<AccessibilityNodeInfo>()
         collect(root, candidates)
@@ -367,7 +407,7 @@ private object TextExtractor {
             val value = node.text?.toString()?.trim().orEmpty()
             val rect = Rect(); node.getBoundsInScreen(rect)
             val key = "$value|${rect.left}|${rect.top}|${rect.right}|${rect.bottom}"
-            if (value.length >= 3 && !isControl(node, value)) unique.putIfAbsent(key, node)
+            if (value.length >= 3 && !isControlOrChrome(node)) unique.putIfAbsent(key, node)
         }
         return unique.values.map { node ->
             ExtractedBlock(node.text.toString().trim(), node)
@@ -379,17 +419,30 @@ private object TextExtractor {
 
     private fun AccessibilityNodeInfo.boundsInScreen(): Rect = Rect().also { getBoundsInScreen(it) }
 
+    private fun classNameOf(node: AccessibilityNodeInfo): String =
+        node.className?.toString()?.lowercase(Locale.getDefault()).orEmpty()
+
     private fun collect(node: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>) {
         if (node == null || !node.isVisibleToUser) return
+        if (CHROME_CONTAINER_MARKERS.any { classNameOf(node).contains(it) }) return
         val value = node.text?.toString()?.trim().orEmpty()
         if (value.isNotBlank()) out += node
         for (i in 0 until node.childCount) collect(node.getChild(i), out)
     }
 
-    private fun isControl(node: AccessibilityNodeInfo, value: String): Boolean {
+    /** True if this node (or a close-by ancestor) is a control rather than page content. */
+    private fun isControlOrChrome(node: AccessibilityNodeInfo): Boolean {
         if (node.isClickable || node.isCheckable || node.isEditable) return true
-        val normalized = value.lowercase(Locale.getDefault())
-        return normalized in setOf("ok", "cancel", "назад", "меню", "далее", "закрыть", "поделиться", "search", "back")
+        if (CONTROL_CLASS_MARKERS.any { classNameOf(node).contains(it) }) return true
+        var parent = node.parent
+        var depth = 0
+        while (parent != null && depth < MAX_ANCESTOR_DEPTH) {
+            if (parent.isClickable || parent.isCheckable) return true
+            if (CONTROL_CLASS_MARKERS.any { classNameOf(parent).contains(it) }) return true
+            parent = parent.parent
+            depth++
+        }
+        return false
     }
 }
 
