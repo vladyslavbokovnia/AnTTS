@@ -31,6 +31,10 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
     private var pendingInputNode: AccessibilityNodeInfo? = null
     private var lastInputSpoken = ""
     private var inputRevision = 0L
+    private var inputChangeStart = -1
+    private var inputSentenceIndex = 0
+    private var activeUtteranceId: String? = null
+    private var speechGeneration = 0L
     private val inputDebounce = Runnable { announcePendingInput() }
 
     companion object { @Volatile var isRunning = false }
@@ -49,8 +53,8 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
         tts?.language = Locale.getDefault()
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) = Unit
-            override fun onError(utteranceId: String?) { main.post { reading = false; overlay?.setPlaying(false) } }
-            override fun onDone(utteranceId: String?) { main.post { if (reading) advanceAfterSpeech() } }
+            override fun onError(utteranceId: String?) { main.post { if (utteranceId == activeUtteranceId) { reading = false; overlay?.setPlaying(false) } } }
+            override fun onDone(utteranceId: String?) { main.post { if (reading && utteranceId == activeUtteranceId) advanceAfterSpeech() } }
         })
     }
 
@@ -60,6 +64,7 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             val source = event.source
             if (source != null && isEditable(source)) {
                 pendingInputNode = source
+                inputChangeStart = event.fromIndex.takeIf { it >= 0 }
                 inputRevision++
                 main.removeCallbacks(inputDebounce)
                 main.postDelayed(inputDebounce, 750L)
@@ -82,16 +87,43 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
     private fun announcePendingInput() {
         if (!AppSettings(this).speakInputAfterVoice || !ttsReady || reading) return
         val node = pendingInputNode ?: return
-        val text = node.text?.toString()?.trim().orEmpty()
+        val text = node.text?.toString().orEmpty()
         if (text.isBlank() || text == lastInputSpoken) return
         lastInputSpoken = text
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "antts-input-${inputRevision}-${System.nanoTime()}")
+        inputSentenceIndex = sentenceIndexAt(text, inputChangeStart.takeIf { it >= 0 } ?: node.textSelectionStart)
+        speakInputSentence(node, inputSentenceIndex, inputChangeStart.takeIf { it >= 0 } ?: node.textSelectionStart)
+    }
+
+    private fun inputSentences(text: String): List<IntRange> =
+        Regex("[^.!?\\n]+(?:[.!?]+|$)").findAll(text).map { it.range }.toList()
+
+    private fun sentenceIndexAt(text: String, position: Int): Int {
+        val sentences = inputSentences(text)
+        if (sentences.isEmpty()) return 0
+        val p = position.coerceIn(0, text.length)
+        return sentences.indexOfFirst { p in it }.takeIf { it >= 0 } ?: sentences.lastIndex
+    }
+
+    private fun speakInputSentence(node: AccessibilityNodeInfo, index: Int, startAt: Int = -1) {
+        val text = node.text?.toString().orEmpty()
+        val sentences = inputSentences(text)
+        if (sentences.isEmpty()) return
+        inputSentenceIndex = index.coerceIn(0, sentences.lastIndex)
+        val range = sentences[inputSentenceIndex]
+        val start = if (startAt in range) startAt else range.first
+        val spoken = text.substring(start, range.last + 1).trim()
+        if (spoken.isBlank()) return
+        activeUtteranceId = "antts-input-${inputRevision}-${System.nanoTime()}"
+        tts?.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, activeUtteranceId)
     }
 
     private fun refreshBlocks() {
         val root = rootInActiveWindow ?: return
         val fresh = TextExtractor.extract(root)
-        val snapshot = fresh.joinToString("\u0000") { it.text }
+        val snapshot = fresh.joinToString("\u0000") {
+            val r = Rect(); it.node.getBoundsInScreen(r)
+            "${it.text}|${r.top}|${r.bottom}|${it.node.viewIdResourceName}"
+        }
         if (fresh.isNotEmpty() && snapshot != lastSnapshot) {
             blocks.clear(); blocks.addAll(fresh); lastSnapshot = snapshot
             current = current.coerceIn(0, blocks.lastIndex)
@@ -116,7 +148,8 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             return
         }
         block.node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-        tts?.speak(block.text, TextToSpeech.QUEUE_FLUSH, null, "antts-$current-${System.nanoTime()}")
+        activeUtteranceId = "antts-block-$current-${speechGeneration++}-${System.nanoTime()}"
+        tts?.speak(block.text, TextToSpeech.QUEUE_FLUSH, null, activeUtteranceId)
         overlay?.setProgress(current, blocks.size)
     }
 
@@ -125,7 +158,14 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             val next = blocks[current + 1]
             if (AppSettings(this).scrollMode == "smooth" && nearBottom(next.node)) {
                 scrollParent(next.node)?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-                main.postDelayed({ if (reading) { current++; speakCurrent() } }, 180)
+                val generation = speechGeneration
+                main.postDelayed({
+                    if (reading && speechGeneration == generation) {
+                        refreshBlocks()
+                        current = (current + 1).coerceAtMost(blocks.lastIndex)
+                        speakCurrent()
+                    }
+                }, 220)
             } else {
                 current++
                 speakCurrent()
@@ -171,6 +211,15 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
     }
 
     private fun move(delta: Int) {
+        if (!reading && pendingInputNode != null) {
+            val node = pendingInputNode!!
+            val text = node.text?.toString().orEmpty()
+            if (inputSentences(text).isNotEmpty()) {
+                tts?.stop()
+                speakInputSentence(node, inputSentenceIndex + delta)
+                return
+            }
+        }
         refreshBlocks()
         if (blocks.isEmpty()) return
         current = (current + delta).coerceIn(0, blocks.lastIndex)
@@ -208,10 +257,12 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
         return rect.width().toLong() * rect.height().toLong()
     }
 
-    override fun onInterrupt() { reading = false; tts?.stop(); overlay?.setPlaying(false) }
+    override fun onInterrupt() { reading = false; speechGeneration++; activeUtteranceId = null; tts?.stop(); overlay?.setPlaying(false) }
     override fun onDestroy() {
         isRunning = false
         reading = false
+        speechGeneration++
+        activeUtteranceId = null
         main.removeCallbacks(inputDebounce)
         pendingInputNode = null
         overlay?.hide()
@@ -314,7 +365,9 @@ private object TextExtractor {
         val unique = LinkedHashMap<String, AccessibilityNodeInfo>()
         candidates.forEach { node ->
             val value = node.text?.toString()?.trim().orEmpty()
-            if (value.length >= 3 && !isControl(node, value)) unique.putIfAbsent(value, node)
+            val rect = Rect(); node.getBoundsInScreen(rect)
+            val key = "$value|${rect.left}|${rect.top}|${rect.right}|${rect.bottom}"
+            if (value.length >= 3 && !isControl(node, value)) unique.putIfAbsent(key, node)
         }
         return unique.values.map { node ->
             ExtractedBlock(node.text.toString().trim(), node)
