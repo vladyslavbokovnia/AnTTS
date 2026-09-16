@@ -1,4 +1,4 @@
-name: Build AnTTS - ${{ github.ref_name }}
+name: Build AnTTS APK
 
 on:
   push:
@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   build:
+    name: Build AnTTS (${{ github.ref_name }})
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
