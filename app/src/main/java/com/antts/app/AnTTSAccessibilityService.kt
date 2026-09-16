@@ -119,7 +119,7 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
 
     private fun refreshBlocks() {
         val root = rootInActiveWindow ?: return
-        val fresh = TextExtractor.extract(root)
+        val fresh = try { TextExtractor.extract(root) } catch (e: Exception) { return }
         val snapshot = fresh.joinToString("\u0000") {
             val r = Rect(); it.node.getBoundsInScreen(r)
             "${it.text}|${r.top}|${r.bottom}|${it.node.viewIdResourceName}"
@@ -144,7 +144,8 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
         val block = blocks[current]
         if (!block.node.isVisibleToUser) {
             bringIntoView(block.node)
-            main.postDelayed({ if (reading) speakCurrent() }, 180)
+            val generation = speechGeneration
+            main.postDelayed({ if (reading && speechGeneration == generation) speakCurrent() }, 180)
             return
         }
         block.node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
@@ -159,10 +160,12 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             if (AppSettings(this).scrollMode == "smooth" && nearBottom(next.node)) {
                 scrollParent(next.node)?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
                 val generation = speechGeneration
+                val nextText = next.text
                 main.postDelayed({
                     if (reading && speechGeneration == generation) {
                         refreshBlocks()
-                        current = (current + 1).coerceAtMost(blocks.lastIndex)
+                        val matched = blocks.indexOfFirst { it.text == nextText }
+                        current = if (matched >= 0) matched else (current + 1).coerceAtMost(blocks.lastIndex)
                         speakCurrent()
                     }
                 }, 220)
