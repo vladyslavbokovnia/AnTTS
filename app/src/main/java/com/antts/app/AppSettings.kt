@@ -30,6 +30,10 @@ class AppSettings(context: Context) {
         get() = prefs.getString("scroll_mode", "smooth") ?: "smooth"
         set(value) = prefs.edit().putString("scroll_mode", value).apply()
 
+    var speakInputAfterVoice: Boolean
+        get() = prefs.getBoolean("speak_input_after_voice", true)
+        set(value) = prefs.edit().putBoolean("speak_input_after_voice", value).apply()
+
     fun periodStartMillis(): Long {
         val now = System.currentTimeMillis()
         val cycle = java.util.Calendar.getInstance().apply {

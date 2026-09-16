@@ -88,8 +88,14 @@ class MainActivity : Activity() {
             }
         }
         root.addView(mode, match())
+        val inputSpeech = CheckBox(this).apply {
+            text = "Озвучивать поле после голосового ввода (Gboard)"
+            isChecked = settings.speakInputAfterVoice
+            setOnCheckedChangeListener { _, checked -> settings.speakInputAfterVoice = checked }
+        }
+        root.addView(inputSpeech, match())
         val help = TextView(this).apply {
-            text = "Трафик считается по данным Android за выбранный расчётный цикл. Нажатие на верхнюю полосу запускает/останавливает чтение; свайп меняет блок."
+            text = "После окончания голосового ввода AnTTS ждёт завершения изменений и озвучивает итоговое поле. Нажатие на верхнюю полосу запускает/останавливает чтение; свайп меняет блок."
             textSize = 13f; setTextColor(Color.DKGRAY); setPadding(0, 16, 0, 0)
         }
         root.addView(help)

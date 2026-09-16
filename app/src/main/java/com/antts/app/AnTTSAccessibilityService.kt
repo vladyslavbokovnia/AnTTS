@@ -28,6 +28,10 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
     private var reading = false
     private var ttsReady = false
     private var lastSnapshot = ""
+    private var pendingInputNode: AccessibilityNodeInfo? = null
+    private var lastInputSpoken = ""
+    private var inputRevision = 0L
+    private val inputDebounce = Runnable { announcePendingInput() }
 
     companion object { @Volatile var isRunning = false }
 
@@ -52,8 +56,36 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) return
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            val source = event.source
+            if (source != null && isEditable(source)) {
+                pendingInputNode = source
+                inputRevision++
+                main.removeCallbacks(inputDebounce)
+                main.postDelayed(inputDebounce, 750L)
+            }
+            return
+        }
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+            event.source?.let { if (isEditable(it)) pendingInputNode = it }
+        }
         if (!reading || blocks.isEmpty()) refreshBlocks()
+    }
+
+    private fun isEditable(node: AccessibilityNodeInfo): Boolean {
+        if (node.isEditable) return true
+        val className = node.className?.toString().orEmpty()
+        return className.contains("EditText", ignoreCase = true) ||
+            className.contains("AutoCompleteTextView", ignoreCase = true)
+    }
+
+    private fun announcePendingInput() {
+        if (!AppSettings(this).speakInputAfterVoice || !ttsReady || reading) return
+        val node = pendingInputNode ?: return
+        val text = node.text?.toString()?.trim().orEmpty()
+        if (text.isBlank() || text == lastInputSpoken) return
+        lastInputSpoken = text
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "antts-input-${inputRevision}-${System.nanoTime()}")
     }
 
     private fun refreshBlocks() {
@@ -177,7 +209,17 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
     }
 
     override fun onInterrupt() { reading = false; tts?.stop(); overlay?.setPlaying(false) }
-    override fun onDestroy() { isRunning = false; reading = false; overlay?.hide(); tts?.stop(); tts?.shutdown(); blocks.clear(); super.onDestroy() }
+    override fun onDestroy() {
+        isRunning = false
+        reading = false
+        main.removeCallbacks(inputDebounce)
+        pendingInputNode = null
+        overlay?.hide()
+        tts?.stop()
+        tts?.shutdown()
+        blocks.clear()
+        super.onDestroy()
+    }
 
     private inner class ReadingOverlay {
         private val wm = getSystemService(WINDOW_SERVICE) as WindowManager
