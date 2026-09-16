@@ -64,7 +64,7 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             val source = event.source
             if (source != null && isEditable(source)) {
                 pendingInputNode = source
-                inputChangeStart = event.fromIndex.takeIf { it >= 0 }
+                inputChangeStart = event.fromIndex.takeIf { it >= 0 } ?: -1
                 inputRevision++
                 main.removeCallbacks(inputDebounce)
                 main.postDelayed(inputDebounce, 750L)
