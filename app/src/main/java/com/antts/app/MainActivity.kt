@@ -89,7 +89,7 @@ class MainActivity : Activity() {
         }
         root.addView(mode, match())
         val inputSpeech = CheckBox(this).apply {
-            text = "Озвучивать поле после голосового ввода (Gboard)"
+            text = "Озвучивать текст поля ввода по нажатию на панель"
             isChecked = settings.speakInputAfterVoice
             setOnCheckedChangeListener { _, checked -> settings.speakInputAfterVoice = checked }
         }

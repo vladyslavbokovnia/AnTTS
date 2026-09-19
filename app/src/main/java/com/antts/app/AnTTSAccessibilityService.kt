@@ -31,13 +31,11 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
     private var ttsReady = false
     private var lastSnapshot = ""
     private var pendingInputNode: AccessibilityNodeInfo? = null
-    private var lastInputSpoken = ""
     private var inputRevision = 0L
     private var inputChangeStart = -1
     private var inputSentenceIndex = 0
     private var activeUtteranceId: String? = null
     private var speechGeneration = 0L
-    private val inputDebounce = Runnable { announcePendingInput() }
 
     companion object { @Volatile var isRunning = false }
 
@@ -68,13 +66,14 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
                 pendingInputNode = source
                 inputChangeStart = event.fromIndex.takeIf { it >= 0 } ?: -1
                 inputRevision++
-                main.removeCallbacks(inputDebounce)
-                main.postDelayed(inputDebounce, 750L)
             }
             return
         }
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
             event.source?.let { if (isEditable(it)) pendingInputNode = it }
+        }
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            pendingInputNode = null
         }
         if (!reading || blocks.isEmpty()) refreshBlocks()
     }
@@ -86,14 +85,16 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
             className.contains("AutoCompleteTextView", ignoreCase = true)
     }
 
-    private fun announcePendingInput() {
-        if (!AppSettings(this).speakInputAfterVoice || !ttsReady || reading) return
-        val node = pendingInputNode ?: return
+    /** Speaks the focused input field's current sentence. Returns false if there's nothing to speak, so the caller can fall back to normal page reading. */
+    private fun speakPendingInput(): Boolean {
+        if (!AppSettings(this).speakInputAfterVoice || !ttsReady) return false
+        val node = pendingInputNode ?: return false
+        if (!isEditable(node)) return false
         val text = node.text?.toString().orEmpty()
-        if (text.isBlank() || text == lastInputSpoken) return
-        lastInputSpoken = text
+        if (text.isBlank()) return false
         inputSentenceIndex = sentenceIndexAt(text, inputChangeStart.takeIf { it >= 0 } ?: node.textSelectionStart)
         speakInputSentence(node, inputSentenceIndex, inputChangeStart.takeIf { it >= 0 } ?: node.textSelectionStart)
+        return true
     }
 
     private fun inputSentences(text: String): List<IntRange> =
@@ -135,6 +136,7 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
 
     private fun startOrPause() {
         if (reading) { reading = false; tts?.stop(); overlay?.setPlaying(false); return }
+        if (speakPendingInput()) return
         refreshBlocks()
         if (blocks.isEmpty() || !ttsReady) return
         reading = true; overlay?.setPlaying(true); speakCurrent()
@@ -288,7 +290,6 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
         reading = false
         speechGeneration++
         activeUtteranceId = null
-        main.removeCallbacks(inputDebounce)
         pendingInputNode = null
         overlay?.hide()
         tts?.stop()
