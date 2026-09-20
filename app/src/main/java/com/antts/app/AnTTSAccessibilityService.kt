@@ -75,6 +75,9 @@ class AnTTSAccessibilityService : AccessibilityService(), TextToSpeech.OnInitLis
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             pendingInputNode = null
         }
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            pendingInputNode = null
+        }
         if (!reading || blocks.isEmpty()) refreshBlocks()
     }
 
