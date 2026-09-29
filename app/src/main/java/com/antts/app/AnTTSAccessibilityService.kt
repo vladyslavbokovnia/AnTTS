@@ -652,5 +652,3 @@ object InputSentenceParser {
 }
 
 data class ExtractedBlock(val text: String, val node: AccessibilityNodeInfo)
-
-[executed on device: localhost (b5f24a32-3997-471d-b5ec-40f17164fa08)]
